@@ -1,0 +1,280 @@
+---
+title: "Tipología de datos - PRAC2"
+author: "Francisco Javier Gómez Gálvez"
+date: "19 de mayo de 2019"
+output:
+  html_document: 
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Descripción del Dataset
+
+Se utilizará un conjunto de datos de Kaggle: "Titanic: Machine Learning from Disaster". Los atributos son:
+
+* PassengerId: identificador único de pasajero
+* Survived: Si o no
+* Pclass: clase en la que viajaba
+* Name: nombre
+* Sex: genero
+* Age: edad
+* SibSp: number of siblings or spouses aboard
+* Parch: number of parents or children aboard
+* Ticket: ticker number
+* Fare: precio del billete
+* Cabin: numero de cabina
+* Embarked: lugar de embarcacion (C = Cherbourg, Q = Queenstown, S = Southampton)
+
+Asimismo, disponemos de 3 ficheros:
+
+* Conjunto de training: incluye todos los atributos
+* Conjunto de test: incluye todos los atributos menos "Survived"
+* Resultados del conjunto de test: incluye la columna "Survived" del conjunto de test
+
+
+El objetivo es llegar a la creación de un conjunto de reglas que permitan estimar, en base a los atributos de los que disponemos, si un individuo sobreviviría o no.
+
+# Integración y selección de los datos a analizar
+
+Procedemos a la carga de datos de los distintos ficheros. Con el fin de realizar una inspección preliminar de los datos, generaremos un dataframe que será el conjunto completo (train+test)
+
+```{r, warning=FALSE, message=FALSE}
+df_train <- read.csv(".\\Titanic\\train.csv")
+df_test <- read.csv(".\\Titanic\\test.csv")
+df_results <- read.csv(".\\Titanic\\gender_submission.csv")
+df_test_full <- merge(df_test, df_results, by = "PassengerId")
+df_full <- rbind(df_train,df_test_full)
+```
+
+Una vez hemos cargado el fichero en un dataframe, podemos obtener una primera descripción de los datos, incluyendo número de registros agregados, nombres de variables, etc. Concretamente, podemos aplicar funciones mas especificas para conocer, respectivamente, el numero de registros total, el numero de variables y los nombres de las mismas:
+
+```{r, warning=FALSE, message=FALSE}
+nrow(df_full)
+ncol(df_full)
+colnames(df_full)
+```
+
+Pasamos a enumerar las columnas con valores vacios o perdidos.
+
+```{r, warning=FALSE, message=FALSE}
+colSums(df_full=="")
+```
+
+Antes de realizar la limpieza de los datos, intentaremos ver si podemos consolidar atributos y reducir la dimensionalidad del dataset.
+
+Se propone:
+
+* Eliminar los atributos SibSp y Parch en favor de un único atributo "Z_Familia" que indique si la persona viajaba sola o con familiares.
+* Eliminar el atributo del Nombre, ya que disponemos del identificador único (PassengerID)
+* Eliminar los atributos de Ticket y Cabina, ya que debido a los distintos valores que presentan contribuirían a un posible overfitting del modelo que queramos diseñar.
+
+```{r}
+require(dplyr)
+df_full$Z_Familia <- ifelse(df_full$SibSp > 0 | df_full$Parch>0,"Si","No")
+df_util <- select(df_full,c("PassengerId","Age","Sex","Pclass","Survived","Fare","Embarked","Z_Familia"))
+
+```
+
+# Limpieza de los datos
+
+## Valores perdidos y vacios
+
+Nos centramos en primer lugar en los valores perdidos. Enumeramos:
+
+```{r, warning=FALSE, message=FALSE}
+summary(df_util)
+sapply(df_util, function(x) sum(is.na(x)))
+```
+
+Vemos que tenemos missing values en la edad, y dado que es un dato que pretendemos utilizar para la generación de reglas, no podemos eliminar los 263 registros ya que estaríamos descartando el 20% del dataset. En este caso, usaremos la mediana como estimador robusto para ajustar la edad. Asimismo, realizaremos una clasificacion para discernir entre mayor o menor de edad.
+
+De igual manera, tratamos los N/A de Fare y vemos como quedan el resto de atributos
+
+```{r, warning=FALSE, message=FALSE}
+df_util$Age[is.na(df_util$Age)] <- median(df_util$Age, na.rm=TRUE)
+df_util$Fare[is.na(df_util$Fare)] <- median(df_util$Fare, na.rm=TRUE)
+df_util$Z_Adulto <- ifelse(df_util$Age < 18, "Menor", "Adulto")
+colSums(df_util=="")
+```
+
+Por último, disponemos de valores vacios relativos a la ciudad de origen. Decidimos eliminarlos ya que tiene un impacto mínimo sobre el dataset (2 registros de 1309 es menos del 0,2%)
+
+```{r, warning=FALSE, message=FALSE}
+df_util <- subset(df_util,Embarked!="")
+colSums(df_util=="")
+```
+
+## Valores extremos
+
+Hacemos uso de boxplot para representar variables cuantitativas
+
+```{r, warning=FALSE, message=FALSE}
+boxplot(df_util$Age)
+boxplot(df_util$Fare)
+```
+
+A la vista de los boxplots, y para evitar que los outliers distorsionen el conjunto de datos, establecemos el siguiente criterio:
+
+* La edad podrá ser cómo máximo 65 años
+* La tarifa podrá ser como máximo de 100 dolares
+
+```{r, warning=FALSE, message=FALSE}
+df_util <- subset(df_util, Age <=65 & Fare <= 100)
+boxplot(df_util$Age)
+boxplot(df_util$Fare)
+```
+
+# Análisis de los datos
+
+## Análisis general
+
+En primer lugar, buscamos ver de modo intuitivo la relación que pueda haber entre la supervivencia y los atributos de los que disponemos.
+
+```{r, warning=FALSE, message=FALSE}
+
+
+require(ggplot2)
+require(grid)
+require(gridExtra)
+
+df_util$Survived <- factor(df_util$Survived)
+levels(df_util$Survived)=c("No","Si")
+
+
+grid.newpage()
+plotbyClass<-ggplot(df_util,aes(Pclass,fill=Survived))+geom_bar() +labs(x="Class", y="Passengers")+ guides(fill=guide_legend(title=""))+ scale_fill_manual(values=c("black","#008000"))+ggtitle("Survived by Class")
+plotbyAge<-ggplot(df_util,aes(Z_Adulto,fill=Survived))+geom_bar() +labs(x="Age", y="Passengers")+ guides(fill=guide_legend(title=""))+ scale_fill_manual(values=c("black","#008000"))+ggtitle("Survived by Age")
+plotbySex<-ggplot(df_util,aes(Sex,fill=Survived))+geom_bar() +labs(x="Sex", y="Passengers")+ guides(fill=guide_legend(title=""))+ scale_fill_manual(values=c("black","#008000"))+ggtitle("Survived by Sex")
+grid.arrange(plotbyClass,plotbyAge,plotbySex,ncol=2)
+
+```
+
+Podemos ver a partir de las gráficas expuestas que:
+
+* Parece haber correlación entre la clase y la proporcion de personas que se salvan
+* Parece haber correlación entre el sexo y la proporcion de personas que se salvan
+* Parece haber correlación entre la edad y la proporción de personas que se salvan
+
+Complementamos con tablas de contingencia para poder visualizar las proporciones exactas que hay en cada grupo
+
+```{r, warning=FALSE, message=FALSE}
+t_SST <- table(df_util$Sex, df_util$Survived)
+prop.table(t_SST, margin = 1)
+```
+
+```{r, warning=FALSE, message=FALSE}
+t_SCT <- table(df_util$Pclass, df_util$Survived)
+prop.table(t_SCT, margin = 1)
+```
+
+```{r, warning=FALSE, message=FALSE}
+t_SAT <- table(df_util$Z_Adulto, df_util$Survived)
+prop.table(t_SAT, margin = 1) 
+```
+
+## Análisis de la varianza
+
+Realizaremos distintos tests para hacernos una idea de la distribución que sigue el conjunto
+
+### Asunción de normalidad y homogeneidad de la varianza
+
+Haremos uso del test de Shapiro, el cual plantea un contraste de hipotesis para discernir si la distribución a analizar sigue una distribución normal o no. La *hipotesis nula* es que nos encontramos ante una distribución normal, la *hipotesis alternativa* es que la distribución no se asemeja a una normal.
+
+Para esta prueba usaremos un nivel de significancia ($\alpha$) de 0.01.
+
+```{r, warning=FALSE, message=FALSE}
+shapiro.test(df_util$Age)
+shapiro.test(df_util$Fare)
+```
+
+Tanto en el caso de la edad como el precio del billete, obtenemos un p-valor mucho menor que el nivel de significancia, por lo que rechazamos la hipotesis nula en favor de la hipotesis alternativa: no se sigue una distribución normal, por lo que se deberán usar tests no paramétricos en el futuro.
+
+```{r, warning=FALSE, message=FALSE}
+fligner.test(Age ~ Survived, data=df_util)
+fligner.test(Fare ~ Survived, data=df_util)
+```
+
+Vemos que no disponemos de suficiente evidencia como para no rechazar la hipotesis nula, por lo que asumismo que nos encontramos ante un conjunto con varianza heterogenea.
+
+### Comparación de grupos de datos
+
+Podemos pasar a hacer uso del test de Wilcox para estudiar si hay diferencias significativas en la varianza en función de la supervivencia para los atributos de los que disponemos (hipotesis nula)
+
+```{r, warning=FALSE, message=FALSE}
+wilcox.test(Age ~ Survived, data = df_util)
+wilcox.test(Fare ~ Survived, data = df_util)
+```
+Vemos que con un nivel de significancía de 0.05 aceptamos la hipotesis nula. Existen *diferencias significativas* con respecto a la varianza en funcion de la edad a la hora de poner el foco sobre la supervivencia del sujeto.
+
+Por otro lado, no parece existir una diferencia de varianza significativa para la supervivencia en función del precio del billete, por lo que rechazamos la hipotesis nula y asumimos independencia.
+
+Podemos tambien aplicar el test de Kruskal, que es similar al test de Wilcox pero admite más de dos grupos. Esperariamos que nos arrojase resultados similares.
+
+```{r, warning=FALSE, message=FALSE}
+kruskal.test(Age ~ Survived, data = df_util)
+kruskal.test(Fare ~ Survived, data = df_util)
+```
+
+Tal y como esperabamos, los resultados coinciden con los proporcionados por el test de Wilcox.
+
+Para afinar más, podemos realizar un test $\chi^2$ para encontrar diferencias significativas entre grupos de variables categóricas. En este caso, la hipotesis nula es que hay independencia entre los atributos, y la hipotesis alternativa es que existe una dependencia entre los atributos.
+
+```{r, warning=FALSE, message=FALSE}
+chisq.test(table(df_util$Z_Adulto,df_util$Survived))
+chisq.test(table(df_util$Z_Familia,df_util$Survived))
+```
+
+Debido a que obtenemos un p-valor menor que 0 en ambos casos, rechazamos la hipotesis nula y por lo tanto tenemos evidencia de que existe una relación entre la supervivencia y ser menor/mayor de edad o viajar con familia.
+
+# Representación de los resultados a partir de tablas y gráficas.
+
+Se ha proporcionado en apartados anteriores (e.g. tablas de contingencia y stacked bar plots)
+
+# Resolución del problema
+
+Hemos visto que hay atributos significativos a la hora de discernir entre si un sujeto sobrevive o no. Parece razonable intentar buscar reglas que nos apoyen a la hora de identificar casuisticas más especificas.
+
+## Creación de los sets de training y test
+
+Mezclamos los datos y creamos un conjunto de training que sea 2/3 del conjunto original. Los sujetos restantes formarán parte del conjunto de test
+
+```{r}
+set.seed(1)
+data_random <- df_util[sample(nrow(df_util)),]
+set.seed(666)
+data_random$Pclass <- ifelse(data_random$Pclass==1,"1a",ifelse(data_random$Pclass==2,"2a","3a"))
+y <- data_random[,5] 
+X <- data_random[,c(3,4,9)] 
+```
+
+```{r, warning=FALSE, message=FALSE}
+indexes = sample(1:nrow(df_util), size=floor((2/3)*nrow(df_util)))
+trainX<-X[indexes,]
+trainy<-y[indexes]
+testX<-X[-indexes,]
+testy<-y[-indexes]
+```
+
+## Creación del arbol de decisión
+
+```{r}
+model <- C50::C5.0(trainX, trainy,rules=TRUE )
+summary(model)
+```
+
+Parece que, finalmente, el algoritmo C5.0 considera que únicamente conociendo el sexo de la persona puede estimarse si sobrevive o no con una precisión del 85%.
+
+## Validación del modelo
+
+Hacemos uso del paquete gmodels para presentar una matriz de confusión usando el conjunto de test.
+
+```{r}
+require(gmodels)
+predicted_model <- predict( model, testX, type="class" )
+CrossTable(testy, predicted_model,prop.chisq  = FALSE, prop.c = FALSE, prop.r =FALSE,dnn = c('Reality', 'Prediction'))
+```
+
+Finalmente, con esta validación podemos verificar que se cumple la precisión estimada y hemos resuelto el problema que teniamos: identificar atributos que nos permita discernir la probabilidad de supervivencia, y la generación de reglas en función de los mismos.
