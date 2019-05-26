@@ -10,6 +10,10 @@ La práctica ha sido realizada de modo individual por __Francisco J. Gómez Gál
 
 - **PRAC2.html**: Informe de la práctica
 - **PRAC2.Rmd**: Código R (R Markdown)
+- **dataset_resultado.csv**: Predicción en base al modelo generado
+- **Titanic/train.csv**: Conjunto de entrenamiento
+- **Titanic/test.csv**: Conjunto de test para realizar la predicción
+- **Titanic/gender_submission.csv**: Ejemplo de predicción proporcionado en Kaggle
 
 # Recursos
 
