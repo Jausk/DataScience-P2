@@ -28,39 +28,34 @@ Se utilizará un conjunto de datos de Kaggle: "Titanic: Machine Learning from Di
 * Cabin: numero de cabina
 * Embarked: lugar de embarcacion (C = Cherbourg, Q = Queenstown, S = Southampton)
 
-Asimismo, disponemos de 3 ficheros:
+Asimismo, disponemos de 2 ficheros:
 
 * Conjunto de training: incluye todos los atributos
 * Conjunto de test: incluye todos los atributos menos "Survived"
-* Resultados del conjunto de test: incluye la columna "Survived" del conjunto de test
-
 
 El objetivo es llegar a la creación de un conjunto de reglas que permitan estimar, en base a los atributos de los que disponemos, si un individuo sobreviviría o no.
 
 # Integración y selección de los datos a analizar
 
-Procedemos a la carga de datos de los distintos ficheros. Con el fin de realizar una inspección preliminar de los datos, generaremos un dataframe que será el conjunto completo (train+test)
+Procedemos a la carga de datos de los distintos ficheros.
 
 ```{r, warning=FALSE, message=FALSE}
 df_train <- read.csv(".\\Titanic\\train.csv")
 df_test <- read.csv(".\\Titanic\\test.csv")
-df_results <- read.csv(".\\Titanic\\gender_submission.csv")
-df_test_full <- merge(df_test, df_results, by = "PassengerId")
-df_full <- rbind(df_train,df_test_full)
 ```
 
 Una vez hemos cargado el fichero en un dataframe, podemos obtener una primera descripción de los datos, incluyendo número de registros agregados, nombres de variables, etc. Concretamente, podemos aplicar funciones mas especificas para conocer, respectivamente, el numero de registros total, el numero de variables y los nombres de las mismas:
 
 ```{r, warning=FALSE, message=FALSE}
-nrow(df_full)
-ncol(df_full)
-colnames(df_full)
+nrow(df_train)
+ncol(df_train)
+colnames(df_train)
 ```
 
 Pasamos a enumerar las columnas con valores vacios o perdidos.
 
 ```{r, warning=FALSE, message=FALSE}
-colSums(df_full=="")
+colSums(df_train=="")
 ```
 
 Antes de realizar la limpieza de los datos, intentaremos ver si podemos consolidar atributos y reducir la dimensionalidad del dataset.
@@ -71,10 +66,11 @@ Se propone:
 * Eliminar el atributo del Nombre, ya que disponemos del identificador único (PassengerID)
 * Eliminar los atributos de Ticket y Cabina, ya que debido a los distintos valores que presentan contribuirían a un posible overfitting del modelo que queramos diseñar.
 
-```{r}
+```{r, warning=FALSE, message=FALSE}
 require(dplyr)
-df_full$Z_Familia <- ifelse(df_full$SibSp > 0 | df_full$Parch>0,"Si","No")
-df_util <- select(df_full,c("PassengerId","Age","Sex","Pclass","Survived","Fare","Embarked","Z_Familia"))
+df_train$Z_Familia <- ifelse(df_train$SibSp > 0 | df_train$Parch>0,"Si","No")
+df_test$Z_Familia <- ifelse(df_test$SibSp > 0 | df_test$Parch>0,"Si","No")
+df_util <- select(df_train,c("PassengerId","Age","Sex","Pclass","Survived","Fare","Embarked","Z_Familia"))
 
 ```
 
@@ -91,12 +87,10 @@ sapply(df_util, function(x) sum(is.na(x)))
 
 Vemos que tenemos missing values en la edad, y dado que es un dato que pretendemos utilizar para la generación de reglas, no podemos eliminar los 263 registros ya que estaríamos descartando el 20% del dataset. En este caso, usaremos la mediana como estimador robusto para ajustar la edad. Asimismo, realizaremos una clasificacion para discernir entre mayor o menor de edad.
 
-De igual manera, tratamos los N/A de Fare y vemos como quedan el resto de atributos
-
 ```{r, warning=FALSE, message=FALSE}
 df_util$Age[is.na(df_util$Age)] <- median(df_util$Age, na.rm=TRUE)
-df_util$Fare[is.na(df_util$Fare)] <- median(df_util$Fare, na.rm=TRUE)
 df_util$Z_Adulto <- ifelse(df_util$Age < 18, "Menor", "Adulto")
+df_test$Z_Adulto <- ifelse(df_test$Age < 18, "Menor", "Adulto")
 colSums(df_util=="")
 ```
 
@@ -239,42 +233,44 @@ Hemos visto que hay atributos significativos a la hora de discernir entre si un 
 
 ## Creación de los sets de training y test
 
-Mezclamos los datos y creamos un conjunto de training que sea 2/3 del conjunto original. Los sujetos restantes formarán parte del conjunto de test
+Mezclamos los datos y utilizamos el conjunto del que disponemos como conjunto de training.
 
-```{r}
-set.seed(1)
+```{r, warning=FALSE, message=FALSE}
 data_random <- df_util[sample(nrow(df_util)),]
-set.seed(666)
-data_random$Pclass <- ifelse(data_random$Pclass==1,"1a",ifelse(data_random$Pclass==2,"2a","3a"))
 y <- data_random[,5] 
 X <- data_random[,c(3,4,9)] 
 ```
 
+Nota: nuestro conjunto de test realmente no servirá para testear, sino únicamente para realizar una predicción que podremos enviar a la competición.
+
 ```{r, warning=FALSE, message=FALSE}
-indexes = sample(1:nrow(df_util), size=floor((2/3)*nrow(df_util)))
-trainX<-X[indexes,]
-trainy<-y[indexes]
-testX<-X[-indexes,]
-testy<-y[-indexes]
+trainX<-X
+trainy<-y
+testX<-df_test[,c(2,4,13)] 
 ```
 
 ## Creación del arbol de decisión
 
-```{r}
+```{r, warning=FALSE, message=FALSE}
 model <- C50::C5.0(trainX, trainy,rules=TRUE )
 summary(model)
 ```
 
-Parece que, finalmente, el algoritmo C5.0 considera que únicamente conociendo el sexo de la persona puede estimarse si sobrevive o no con una precisión del 85%.
+Parece que, finalmente, el algoritmo C5.0 considera que únicamente conociendo el sexo de la persona puede estimarse si sobrevive o no con una precisión del 79%.
 
 ## Validación del modelo
 
-Hacemos uso del paquete gmodels para presentar una matriz de confusión usando el conjunto de test.
+Dado que se trata de una competición, no podemos validar el conjunto de test. No obstante, en caso de disponer del mismo, el proceso sería como sigue:
 
-```{r}
+```{r, warning=FALSE, message=FALSE}
 require(gmodels)
 predicted_model <- predict( model, testX, type="class" )
-CrossTable(testy, predicted_model,prop.chisq  = FALSE, prop.c = FALSE, prop.r =FALSE,dnn = c('Reality', 'Prediction'))
+#CrossTable(testy, predicted_model,prop.chisq  = FALSE, prop.c = FALSE, prop.r =FALSE,dnn = c('Reality', 'Prediction'))
+
+# Extraemos nuestra predicción
+
+df_predicted <- cbind(df_test,predicted_model)
+write.csv2(df_predicted,"./dataset_resultado.csv")
 ```
 
-Finalmente, con esta validación podemos verificar que se cumple la precisión estimada y hemos resuelto el problema que teniamos: identificar atributos que nos permita discernir la probabilidad de supervivencia, y la generación de reglas en función de los mismos.
+
